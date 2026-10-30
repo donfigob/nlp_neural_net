@@ -49,9 +49,30 @@ class NeuralSentimentClassifier(SentimentClassifier):
     along with everything needed to run it on new data (word embeddings, etc.)
     """
     def __init__(self, network, word_embeddings):
-        self.network = network
+        self.dan = network
         self.embeddings = word_embeddings
         # raise NotImplementedError
+    
+    def predict(self, ex_words):
+        indexer  = self.embeddings.word_indexer
+        unk_index = indexer.index_of("UNK")
+        indexes = []
+        for word in ex_words:
+            index = indexer.index_of(word)
+            if index == -1:
+                index = unk_index
+            indexes.append(index)
+        input_indixes = torch.tensor(indexes, dtype=torch.long)
+        
+        self.dan.eval()
+        with torch.no_grad():
+            log_probs = self.dan(input_indixes)
+            prediction = torch.argmax(log_probs).item()
+        return prediction
+
+            
+
+
 
 
 class DeepAveragingNetwork(nn.Module):
@@ -94,8 +115,10 @@ def train_deep_averaging_network(args, train_exs: List[SentimentExample], dev_ex
     optimizer = optim.Adam(dan.parameters(), lr=args.lr)
 
     for epoch in range(0, args.num_epochs):
-        for ex in train_exs: 
-            indixes = []
+        total_loss =  0.0
+        random.shuffle(train_exs)
+        for ex in train_exs:
+            indexes = []
             for word in ex.words:
                 index = indexer.index_of(word)
                 if index == -1:
@@ -103,55 +126,12 @@ def train_deep_averaging_network(args, train_exs: List[SentimentExample], dev_ex
                 indexes.append(index)
             input_indixes = torch.tensor(indexes, dtype=torch.long)
             log_probs = dan.forward(input_indixes)
-
-
-
-
-
-    ex = train_exs[0]
-    indexes = []
-    indexer = word_embeddings.word_indexer
-    unk_index = indexer.index_of("UNK")
-
-    for word in ex.words:
-        index = indexer.index_of(word)
-
-        if index == -1:
-            index = unk_index
-        indexes.append(index)
-
-    #print(indexes)
-    input_indixes = torch.tensor(indexes, dtype=torch.long)
-    #print(input_indixes) 
-
-
-    embedding_layer = word_embeddings.get_initialized_embedding_layer()
-    sentence_embeddings = embedding_layer(input_indixes)
-    # print(sentence_embeddings.shape)
-
-    sentence_average = sentence_embeddings.mean(dim=0)
-    # print(sentence_average.shape)
-    
-    embedding_dim = word_embeddings.get_embedding_length()
-
-    hidden_layer = nn.Linear(embedding_dim, args.hidden_size)
-    activation = nn.ReLU()
-
-    hidden = activation(hidden_layer(sentence_average))
-    # print(hidden.shape)
-    
-    output_layer = nn.Linear(args.hidden_size, 2)
-    scores = output_layer(hidden)
-
-    # print(scores.shape)
-
-    log_softmax = nn.LogSoftmax(dim=0)
-    log_probs = log_softmax(scores)
-    # print(log_probs)
-
-
-        
-
-
+            loss = -log_probs[ex.label]
+            total_loss += loss.item()
+            dan.zero_grad()
+            loss.backward()
+            optimizer.step()
+        print("Total loss on epoch %i: %f" % (epoch, total_loss))
+    return NeuralSentimentClassifier(dan, word_embeddings)
 
     # raise NotImplementedError
