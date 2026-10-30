@@ -64,11 +64,12 @@ class NeuralSentimentClassifier(SentimentClassifier):
             if index == -1:
                 index = unk_index
             indexes.append(index)
-        input_indixes = torch.tensor(indexes, dtype=torch.long)
+        input_indixes = torch.tensor(indexes, dtype=torch.long).unsqueeze(0)
         
         self.dan.eval()
         with torch.no_grad():
-            log_probs = self.dan(input_indixes)
+            batch_log_probs = self.dan(input_indixes)
+            log_probs = batch_log_probs[0]
             prediction = torch.argmax(log_probs).item()
         return prediction
 
@@ -81,20 +82,30 @@ class DeepAveragingNetwork(nn.Module):
     def __init__(self, word_embeddings, hidden_size):
         super(DeepAveragingNetwork,self).__init__()
 
+        self.pad_index = word_embeddings.word_indexer.index_of("PAD")
+
         self.embedding_layer = word_embeddings.get_initialized_embedding_layer()
         self.embedding_dim = word_embeddings.get_embedding_length()
 
         self.hidden_layer = nn.Linear(self.embedding_dim, hidden_size)
         self.activation = nn.ReLU()
         self.output_layer = nn.Linear(hidden_size, 2)
-        self.log_softmax = nn.LogSoftmax(dim=0)
+        # self.log_softmax = nn.LogSoftmax(dim=0) kept for the first part of the hm (L,)
+        self.log_softmax = nn.LogSoftmax(dim=-1) # (B, 2) dimension 
 
         nn.init.xavier_uniform_(self.hidden_layer.weight)
         nn.init.xavier_uniform_(self.output_layer.weight)
 
     def forward(self, input_indixes):
         sentence_embeddings = self.embedding_layer(input_indixes)
-        sentence_average = sentence_embeddings.mean(dim=0)
+
+        mask = input_indixes != self.pad_index
+        lengths = mask.sum(dim=1, keepdim=True)
+
+        sentence_sum = sentence_embeddings.sum(dim=1)
+        sentence_average = sentence_sum / lengths
+
+        # sentence_average = sentence_embeddings.mean(dim=0)
         return self.log_softmax(self.output_layer(self.activation(self.hidden_layer(sentence_average))))
 
 
@@ -114,9 +125,11 @@ def evaluate_dan(dan, examples, word_embeddings):
                 if index == -1:
                     index = unk_index
                 indexes.append(index)
-            input_indixes = torch.tensor(indexes, dtype=torch.long)
+            input_indixes = torch.tensor(indexes, dtype=torch.long).unsqueeze(0)
 
-            log_probs = dan(input_indixes)
+            batch_log_probs = dan(input_indixes)
+            log_probs = batch_log_probs[0]
+
             total_loss += (-log_probs[ex.label]).item()
 
             prediction = torch.argmax(log_probs).item()
@@ -148,6 +161,7 @@ def train_deep_averaging_network(args, train_exs: List[SentimentExample], dev_ex
     pad_index = indexer.index_of("PAD")
 
     dan = DeepAveragingNetwork(word_embeddings,args.hidden_size)
+    criterion = nn.NLLLoss()
     optimizer = optim.Adam(dan.parameters(), lr=args.lr)
     history = []
 
@@ -178,11 +192,16 @@ def train_deep_averaging_network(args, train_exs: List[SentimentExample], dev_ex
                 padding_value=pad_index,
             )
             labels = torch.tensor(labels, dtype=torch.long)
+            log_probs = dan(input_indices)
+            loss = criterion(log_probs, labels)
 
-            # Next: adapt forward and the loss to process a complete batch.
-            raise NotImplementedError(
-                "Falta adaptar forward y la pérdida para entrenar con batches."
-            )
+            total_loss += loss.item() * len(batch)
+
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
+
+        
         train_seconds = time.perf_counter() - train_start
 
         eval_start = time.perf_counter()
@@ -205,7 +224,8 @@ def train_deep_averaging_network(args, train_exs: List[SentimentExample], dev_ex
 
     columns = ["epoch", "train_loss", "dev_loss", "train_acc", "dev_acc",
                "train_seconds", "eval_seconds"]
-    with open("metrics_baseline.csv", "w", newline="") as file:
+
+    with open(f"metrics_batch_{args.batch_size}.csv", "w", newline="") as file:
         writer = csv.DictWriter(file, fieldnames=columns)
         writer.writeheader()
         writer.writerows(history)
