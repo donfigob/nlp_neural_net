@@ -1,5 +1,7 @@
 # models.py
 
+import csv
+import time
 import torch
 import torch.nn as nn
 from torch import optim
@@ -96,6 +98,34 @@ class DeepAveragingNetwork(nn.Module):
         return self.log_softmax(self.output_layer(self.activation(self.hidden_layer(sentence_average))))
 
 
+def evaluate_dan(dan, examples, word_embeddings):
+    indexer = word_embeddings.word_indexer
+    unk_index = indexer.index_of("UNK")
+
+    total_loss = 0.0
+    num_correct = 0
+
+    dan.eval()
+    with torch.no_grad():
+        for ex in examples:
+            indexes = []
+            for word in ex.words:
+                index = indexer.index_of(word)
+                if index == -1:
+                    index = unk_index
+                indexes.append(index)
+            input_indixes = torch.tensor(indexes, dtype=torch.long)
+
+            log_probs = dan(input_indixes)
+            total_loss += (-log_probs[ex.label]).item()
+
+            prediction = torch.argmax(log_probs).item()
+            if prediction == ex.label:
+                num_correct += 1
+
+    return total_loss / len(examples), num_correct / len(examples)
+
+
 
 
 
@@ -108,30 +138,78 @@ def train_deep_averaging_network(args, train_exs: List[SentimentExample], dev_ex
     :param word_embeddings: set of loaded word embeddings
     :return: A trained NeuralSentimentClassifier model
     """
+    seed = 42
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+
     indexer  = word_embeddings.word_indexer
     unk_index = indexer.index_of("UNK")
+    pad_index = indexer.index_of("PAD")
 
     dan = DeepAveragingNetwork(word_embeddings,args.hidden_size)
     optimizer = optim.Adam(dan.parameters(), lr=args.lr)
+    history = []
 
     for epoch in range(0, args.num_epochs):
+        dan.train()
+        train_start = time.perf_counter()
         total_loss =  0.0
         random.shuffle(train_exs)
-        for ex in train_exs:
-            indexes = []
-            for word in ex.words:
-                index = indexer.index_of(word)
-                if index == -1:
-                    index =  unk_index
-                indexes.append(index)
-            input_indixes = torch.tensor(indexes, dtype=torch.long)
-            log_probs = dan.forward(input_indixes)
-            loss = -log_probs[ex.label]
-            total_loss += loss.item()
-            dan.zero_grad()
-            loss.backward()
-            optimizer.step()
+        for start in range(0, len(train_exs), args.batch_size):
+            batch = train_exs[start:start + args.batch_size]
+            sentences = []
+            labels = []
+
+            for ex in batch:
+                indexes = []
+                for word in ex.words:
+                    index = indexer.index_of(word)
+                    if index == -1:
+                        index = unk_index
+                    indexes.append(index)
+
+                sentences.append(torch.tensor(indexes, dtype=torch.long))
+                labels.append(ex.label)
+
+            input_indices = nn.utils.rnn.pad_sequence(
+                sentences,
+                batch_first=True,
+                padding_value=pad_index,
+            )
+            labels = torch.tensor(labels, dtype=torch.long)
+
+            # Next: adapt forward and the loss to process a complete batch.
+            raise NotImplementedError(
+                "Falta adaptar forward y la pérdida para entrenar con batches."
+            )
+        train_seconds = time.perf_counter() - train_start
+
+        eval_start = time.perf_counter()
+        train_loss, train_acc = evaluate_dan(dan, train_exs, word_embeddings)
+        dev_loss, dev_acc = evaluate_dan(dan, dev_exs, word_embeddings)
+        eval_seconds = time.perf_counter() - eval_start
+
+        history.append({
+            "epoch": epoch + 1,
+            "train_loss": train_loss,
+            "dev_loss": dev_loss,
+            "train_acc": train_acc,
+            "dev_acc": dev_acc,
+            "train_seconds": train_seconds,
+            "eval_seconds": eval_seconds,
+        })
+
+        print(f"Epoch {epoch + 1}: " f"train loss={train_loss:.4f}, acc={train_acc:.2%}; " f"dev loss={dev_loss:.4f}, acc={dev_acc:.2%}")
         print("Total loss on epoch %i: %f" % (epoch, total_loss))
+
+    columns = ["epoch", "train_loss", "dev_loss", "train_acc", "dev_acc",
+               "train_seconds", "eval_seconds"]
+    with open("metrics_baseline.csv", "w", newline="") as file:
+        writer = csv.DictWriter(file, fieldnames=columns)
+        writer.writeheader()
+        writer.writerows(history)
+
     return NeuralSentimentClassifier(dan, word_embeddings)
 
     # raise NotImplementedError
