@@ -225,7 +225,7 @@ def train_deep_averaging_network(args, train_exs: List[SentimentExample], dev_ex
     columns = ["epoch", "train_loss", "dev_loss", "train_acc", "dev_acc",
                "train_seconds", "eval_seconds"]
 
-    with open(f"metrics_batch_{args.batch_size}.csv", "w", newline="") as file:
+    with open(f"metrics_batch_{args.batch_size}_epochs_{args.num_epochs}.csv", "w", newline="") as file:
         writer = csv.DictWriter(file, fieldnames=columns)
         writer.writeheader()
         writer.writerows(history)

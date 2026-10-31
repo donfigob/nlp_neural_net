@@ -1,0 +1,99 @@
+\documentclass[11pt]{article}
+\usepackage[margin=1in]{geometry}
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage{amsmath,amssymb}
+\usepackage{fancyhdr}
+\usepackage{graphicx}
+\usepackage[table]{xcolor}
+\setlength{\intextsep}{4pt}
+
+\pagestyle{fancy}
+\fancyhf{}
+\fancyhead[L]{Cristian Bautista}
+\fancyhead[C]{CSE 5525 -- Assignment 2}
+\fancyhead[R]{\today}
+\fancyfoot[C]{\thepage}
+\setlength{\headheight}{15pt}
+\renewcommand{\headrulewidth}{0.4pt}
+\renewcommand{\footrulewidth}{0.4pt}
+
+\begin{document}
+\enlargethispage{2\baselineskip}
+\section*{Deep Average Network Sentiment Classification}
+
+\noindent\textbf{Implementation.}
+
+Deep Average Network was implemented using Pytorch form the starting point the provided emebedings of 300 emebedings representation kept frozen. part of the crucial part we the averagin over all the the columns of the sentence and then that will condition the number of inputs or number of input neurons of the neural net. using the default hyperparameter (lr, hidden layer) the threshold of 77\% in dev set were achived. 
+
+Logistic regression was implemented in Python and NumPy following the pipeline provided and using SGD to minimize negative log-likelihood. Weights start at zero; training examples are shuffled each epoch with seed 42. Sparse features use a
+\texttt{Counter} and weights use a NumPy array. The vocabulary is built only from train and frozen for evaluation; unknown features are ignored. There is no bias term or regularization. Predictions are positive when
+$p>0.5$.
+
+\smallskip
+\noindent\textbf{Features and experimental setup.}
+The experiments compared unigram counts, binary indicators of adjacent bigrams, and
+unigram counts clipped to one in \texttt{BetterFeatureExtractor}.
+The supplied reader lowercases train and dev text. Each representation
+was trained for 100 epochs with constant, step-decay, and inverse-decay
+learning rates, starting at 0.001 or 0.003 (18 runs). Step decay reduces
+the learning rate by half every 30 epochs; inverse decay uses
+$\eta_t=\eta_0/(1+0.03t)$, with $t$ starting at zero.
+Weights are updated only on train. For each feature representation and
+learning-rate schedule, the table reports the initial learning rate and epoch
+with the highest dev accuracy, together with the train and dev accuracies
+at that epoch.
+
+\input{figures/batch_results.tex}
+
+\noindent\textbf{Results and discussion.}
+Unigram counts with constant LR 0.003 achieved the best dev accuracy,
+78.21\% at epoch 64, exceeding the 77\% target
+(Table~\ref{tab:feature-schedule-results}). Binary unigrams with step decay
+reached 78.10\%, with only one fewer correct prediction than unigram counts
+with a constant learning rate among 872 dev examples;
+this difference does not establish a clear advantage for counts.
+Bigram indicators reached 98.90\% train accuracy but only 72.82\% dev
+accuracy in their best configuration, consistent with overfitting
+(Figure~\ref{fig:features}). Rarer pairs and unseen dev bigrams could
+contribute, but their coverage was not measured.
+
+For unigram counts, constant learning rates achieved higher training log-likelihood
+after 100 epochs (Figure~\ref{fig:schedules}), without consistent dev gains.
+Step decay performed best for binary unigrams. Initial learning rates,
+decay parameters, and the step interval were chosen heuristically.
+Thus, the best overall result with a constant rate does not rule out
+benefits from schedulers. These conclusions are limited to the configurations
+tested, using a single random seed. A broader grid search and finer tuning could improve performance.
+The figures show all epochs; the table reports selected checkpoints.
+
+Future work could explore L1 regularization to encourage sparse weights and perform feature selection, as well as L2 regularization to reduce overfitting. Adding a squared L2 penalty with a positive coefficient to all weights makes the objective strongly convex and ensures a unique minimizer. Newton's method and Nesterov acceleration could also be evaluated as alternatives to SGD to improve convergence speed. Their performance could be compared using training loss, execution time, and dev accuracy, since faster convergence or a lower training loss does not necessarily imply better generalization.
+
+\clearpage
+\begin{figure}[!ht]
+\centering
+\includegraphics[width=\textwidth]{figures/loss_comparison.pdf}
+\small
+\caption{Mean training and development negative log-likelihood per sentence
+over ten epochs for batch sizes 1, 16, and 32. Solid curves show training
+loss and dashed curves show development loss. Both sets are evaluated
+using the weights at the end of each epoch; padding is excluded from
+the sentence averages.}
+\label{fig:loss}
+% Retain the draft's existing reference until its discussion is revised.
+\label{fig:schedules}
+\end{figure}
+
+\begin{figure}[!ht]
+\centering
+\includegraphics[width=\textwidth]{figures/dev_accuracy_comparison.pdf}
+\small
+\caption{Development accuracy over ten epochs for batch sizes 1, 16,
+and 32, using seed 42. The horizontal gray dashed line marks the
+77\% accuracy target. Each curve uses the corresponding complete
+ten-epoch experiment reported in Table~\ref{tab:batch-results}.}
+\label{fig:dev-accuracy}
+% Retain the draft's existing reference until its discussion is revised.
+\label{fig:features}
+\end{figure}
+\end{document}
